@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audio-converter"
+version = "0.1.0"
+description = "Convert audio between Excel and WAV formats"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "soundfile",
+    "scipy",
+    "openpyxl",
+]
+
+[project.scripts]
+audio-converter = "audio_converter.cli:main"
+
+[project.gui-scripts]
+audio-converter-gui = "audio_converter.gui:main"
