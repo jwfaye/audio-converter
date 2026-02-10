@@ -14,6 +14,9 @@ dependencies = [
     "openpyxl",
 ]
 
+[tool.setuptools.packages.find]
+include = ["audio_converter*"]
+
 [project.scripts]
 audio-converter = "audio_converter.cli:main"
 
