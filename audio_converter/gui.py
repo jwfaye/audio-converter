@@ -1,9 +1,12 @@
 """Tkinter GUI for audio-converter (Excel <-> WAV)."""
 
+import re
 import threading
 import tkinter as tk
 from tkinter import filedialog, ttk
 from pathlib import Path
+
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from audio_converter.converter import ConversionError, excel_to_wav, wav_to_excel
 
@@ -11,7 +14,24 @@ EXCEL_FILETYPES = [("Fichiers Excel", "*.xlsx"), ("Tous les fichiers", "*.*")]
 WAV_FILETYPES = [("Fichiers WAV", "*.wav"), ("Tous les fichiers", "*.*")]
 
 
-class App(tk.Tk):
+_SUPPORTED_EXTENSIONS = {".xlsx", ".wav"}
+
+
+def _clean_drop_path(raw: str) -> str:
+    """Normalize a path received from tkinterdnd2.
+
+    On Windows, paths containing spaces are wrapped in braces: ``{C:/My Folder/file.wav}``.
+    Multiple files may be space-separated; we only keep the first one.
+    """
+    raw = raw.strip()
+    # Take only the first file if multiple were dropped
+    m = re.match(r"\{([^}]+)\}", raw)
+    if m:
+        return m.group(1)
+    return raw.split()[0] if raw else raw
+
+
+class App(TkinterDnD.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Audio Converter")
@@ -44,9 +64,26 @@ class App(tk.Tk):
             value="wav2excel", command=self._on_mode_change,
         ).grid(row=0, column=1, padx=12, pady=6)
 
+        # Drop zone
+        self._drop_label = tk.Label(
+            self,
+            text="Glissez un fichier .xlsx ou .wav ici",
+            relief="groove",
+            bg="#e8f0fe",
+            fg="#555555",
+            font=("Segoe UI", 11),
+            height=3,
+            cursor="hand2",
+        )
+        self._drop_label.grid(row=1, column=0, sticky="ew", **pad)
+        self._drop_label.drop_target_register(DND_FILES)
+        self._drop_label.dnd_bind("<<Drop>>", self._on_drop)
+        self._drop_label.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+        self._drop_label.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+
         # Files frame
         files_frame = ttk.LabelFrame(self, text="Fichiers")
-        files_frame.grid(row=1, column=0, sticky="ew", **pad)
+        files_frame.grid(row=2, column=0, sticky="ew", **pad)
         files_frame.columnconfigure(1, weight=1)
 
         ttk.Label(files_frame, text="Entrée :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
@@ -59,7 +96,7 @@ class App(tk.Tk):
 
         # Sample rate frame
         sr_frame = ttk.LabelFrame(self, text="Fréquence d'échantillonnage")
-        sr_frame.grid(row=2, column=0, sticky="ew", **pad)
+        sr_frame.grid(row=3, column=0, sticky="ew", **pad)
 
         ttk.Label(sr_frame, text="Hz :").grid(row=0, column=0, padx=4, pady=4)
         self._sr_entry = ttk.Entry(sr_frame, textvariable=self._sample_rate, width=10)
@@ -69,11 +106,11 @@ class App(tk.Tk):
 
         # Convert button
         self._convert_btn = ttk.Button(self, text="Convertir", command=self._convert)
-        self._convert_btn.grid(row=3, column=0, sticky="ew", **pad)
+        self._convert_btn.grid(row=4, column=0, sticky="ew", **pad)
 
         # Status bar
         ttk.Label(self, textvariable=self._status, relief="sunken", anchor="w").grid(
-            row=4, column=0, sticky="ew", padx=8, pady=(0, 8),
+            row=5, column=0, sticky="ew", padx=8, pady=(0, 8),
         )
 
     # ── Mode switching ─────────────────────────────────────────────
@@ -83,6 +120,38 @@ class App(tk.Tk):
             self._sr_hint.config(text="(requis)")
         else:
             self._sr_hint.config(text="(optionnel — rééchantillonnage)")
+
+    # ── Drag & drop ────────────────────────────────────────────────
+
+    def _on_drag_enter(self, event) -> None:
+        self._drop_label.config(bg="#cfe2ff", fg="#003399")
+
+    def _on_drag_leave(self, event) -> None:
+        self._drop_label.config(bg="#e8f0fe", fg="#555555")
+
+    def _on_drop(self, event) -> None:
+        self._drop_label.config(bg="#e8f0fe", fg="#555555")
+        path_str = _clean_drop_path(event.data)
+        if not path_str:
+            return
+
+        p = Path(path_str)
+        ext = p.suffix.lower()
+        if ext not in _SUPPORTED_EXTENSIONS:
+            self._status.set(f"Extension « {ext} » non supportée. Déposez un .xlsx ou .wav.")
+            return
+
+        # Auto-switch mode based on extension
+        if ext == ".xlsx":
+            self._mode.set("excel2wav")
+        else:
+            self._mode.set("wav2excel")
+        self._on_mode_change()
+
+        # Fill input and auto-generate output
+        self._input_path.set(str(p))
+        self._auto_output(str(p))
+        self._status.set(f"Fichier chargé : {p.name}")
 
     # ── File browsing ──────────────────────────────────────────────
 

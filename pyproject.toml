@@ -12,6 +12,7 @@ dependencies = [
     "soundfile",
     "scipy",
     "openpyxl",
+    "tkinterdnd2",
 ]
 
 [tool.setuptools.packages.find]

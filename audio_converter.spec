@@ -4,20 +4,24 @@
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+
+# Collect tkinterdnd2 native binaries (TkDND shared libraries)
+dnd_datas, dnd_binaries, dnd_hiddenimports = collect_all("tkinterdnd2")
 
 a = Analysis(
     ["audio_converter/gui.py"],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=dnd_binaries,
+    datas=dnd_datas,
     hiddenimports=[
         "numpy",
         "soundfile",
         "scipy.signal",
         "openpyxl",
-    ],
+    ] + dnd_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
