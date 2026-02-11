@@ -63,7 +63,6 @@ def excel_to_wav(
 
     audio_data = np.array(samples, dtype=np.float32)
 
-    # Normalize to [-1, 1] if values look like int16 range
     if np.abs(audio_data).max() > 1.0:
         audio_data = audio_data / np.abs(audio_data).max()
 

@@ -24,7 +24,6 @@ def _clean_drop_path(raw: str) -> str:
     Multiple files may be space-separated; we only keep the first one.
     """
     raw = raw.strip()
-    # Take only the first file if multiple were dropped
     m = re.match(r"\{([^}]+)\}", raw)
     if m:
         return m.group(1)
@@ -46,25 +45,27 @@ class App(TkinterDnD.Tk):
         self._build_ui()
         self._on_mode_change()
 
-    # ── UI construction ────────────────────────────────────────────
-
     def _build_ui(self) -> None:
         pad = {"padx": 8, "pady": 4}
 
-        # Mode frame
         mode_frame = ttk.LabelFrame(self, text="Mode")
         mode_frame.grid(row=0, column=0, sticky="ew", **pad)
 
         ttk.Radiobutton(
-            mode_frame, text="Excel → WAV", variable=self._mode,
-            value="excel2wav", command=self._on_mode_change,
+            mode_frame,
+            text="Excel → WAV",
+            variable=self._mode,
+            value="excel2wav",
+            command=self._on_mode_change,
         ).grid(row=0, column=0, padx=12, pady=6)
         ttk.Radiobutton(
-            mode_frame, text="WAV → Excel", variable=self._mode,
-            value="wav2excel", command=self._on_mode_change,
+            mode_frame,
+            text="WAV → Excel",
+            variable=self._mode,
+            value="wav2excel",
+            command=self._on_mode_change,
         ).grid(row=0, column=1, padx=12, pady=6)
 
-        # Drop zone
         self._drop_label = tk.Label(
             self,
             text="Glissez un fichier .xlsx ou .wav ici",
@@ -81,20 +82,30 @@ class App(TkinterDnD.Tk):
         self._drop_label.dnd_bind("<<DragEnter>>", self._on_drag_enter)
         self._drop_label.dnd_bind("<<DragLeave>>", self._on_drag_leave)
 
-        # Files frame
         files_frame = ttk.LabelFrame(self, text="Fichiers")
         files_frame.grid(row=2, column=0, sticky="ew", **pad)
         files_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(files_frame, text="Entrée :").grid(row=0, column=0, sticky="w", padx=4, pady=4)
-        ttk.Entry(files_frame, textvariable=self._input_path, width=50).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Button(files_frame, text="Parcourir", command=self._browse_input).grid(row=0, column=2, padx=4, pady=4)
+        ttk.Label(files_frame, text="Entrée :").grid(
+            row=0, column=0, sticky="w", padx=4, pady=4
+        )
+        ttk.Entry(files_frame, textvariable=self._input_path, width=50).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(files_frame, text="Parcourir", command=self._browse_input).grid(
+            row=0, column=2, padx=4, pady=4
+        )
 
-        ttk.Label(files_frame, text="Sortie :").grid(row=1, column=0, sticky="w", padx=4, pady=4)
-        ttk.Entry(files_frame, textvariable=self._output_path, width=50).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ttk.Button(files_frame, text="Parcourir", command=self._browse_output).grid(row=1, column=2, padx=4, pady=4)
+        ttk.Label(files_frame, text="Sortie :").grid(
+            row=1, column=0, sticky="w", padx=4, pady=4
+        )
+        ttk.Entry(files_frame, textvariable=self._output_path, width=50).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(files_frame, text="Parcourir", command=self._browse_output).grid(
+            row=1, column=2, padx=4, pady=4
+        )
 
-        # Sample rate frame
         sr_frame = ttk.LabelFrame(self, text="Fréquence d'échantillonnage")
         sr_frame.grid(row=3, column=0, sticky="ew", **pad)
 
@@ -104,24 +115,22 @@ class App(TkinterDnD.Tk):
         self._sr_hint = ttk.Label(sr_frame, text="")
         self._sr_hint.grid(row=0, column=2, padx=4, pady=4)
 
-        # Convert button
         self._convert_btn = ttk.Button(self, text="Convertir", command=self._convert)
         self._convert_btn.grid(row=4, column=0, sticky="ew", **pad)
 
-        # Status bar
         ttk.Label(self, textvariable=self._status, relief="sunken", anchor="w").grid(
-            row=5, column=0, sticky="ew", padx=8, pady=(0, 8),
+            row=5,
+            column=0,
+            sticky="ew",
+            padx=8,
+            pady=(0, 8),
         )
-
-    # ── Mode switching ─────────────────────────────────────────────
 
     def _on_mode_change(self) -> None:
         if self._mode.get() == "excel2wav":
             self._sr_hint.config(text="(requis)")
         else:
             self._sr_hint.config(text="(optionnel — rééchantillonnage)")
-
-    # ── Drag & drop ────────────────────────────────────────────────
 
     def _on_drag_enter(self, event) -> None:
         self._drop_label.config(bg="#cfe2ff", fg="#003399")
@@ -138,22 +147,20 @@ class App(TkinterDnD.Tk):
         p = Path(path_str)
         ext = p.suffix.lower()
         if ext not in _SUPPORTED_EXTENSIONS:
-            self._status.set(f"Extension « {ext} » non supportée. Déposez un .xlsx ou .wav.")
+            self._status.set(
+                f"Extension « {ext} » non supportée. Déposez un .xlsx ou .wav."
+            )
             return
 
-        # Auto-switch mode based on extension
         if ext == ".xlsx":
             self._mode.set("excel2wav")
         else:
             self._mode.set("wav2excel")
         self._on_mode_change()
 
-        # Fill input and auto-generate output
         self._input_path.set(str(p))
         self._auto_output(str(p))
         self._status.set(f"Fichier chargé : {p.name}")
-
-    # ── File browsing ──────────────────────────────────────────────
 
     def _browse_input(self) -> None:
         if self._mode.get() == "excel2wav":
@@ -184,8 +191,6 @@ class App(TkinterDnD.Tk):
         else:
             self._output_path.set(str(p.with_suffix(".xlsx")))
 
-    # ── Validation ─────────────────────────────────────────────────
-
     def _validate(self) -> tuple[Path, Path, int | None] | None:
         """Validate inputs. Returns (input, output, sample_rate) or None."""
         input_str = self._input_path.get().strip()
@@ -210,7 +215,9 @@ class App(TkinterDnD.Tk):
         mode = self._mode.get()
         if mode == "excel2wav":
             if not sr_str:
-                self._status.set("Erreur : la fréquence d'échantillonnage est requise pour Excel → WAV.")
+                self._status.set(
+                    "Erreur : la fréquence d'échantillonnage est requise pour Excel → WAV."
+                )
                 return None
             try:
                 sr = int(sr_str)
@@ -220,7 +227,6 @@ class App(TkinterDnD.Tk):
                 self._status.set("Erreur : fréquence d'échantillonnage invalide.")
                 return None
         else:
-            # WAV → Excel: sample rate is optional
             sr = None
             if sr_str:
                 try:
@@ -232,8 +238,6 @@ class App(TkinterDnD.Tk):
                     return None
 
         return input_path, output_path, sr
-
-    # ── Conversion (threaded) ──────────────────────────────────────
 
     def _convert(self) -> None:
         validated = self._validate()
@@ -252,7 +256,9 @@ class App(TkinterDnD.Tk):
         )
         thread.start()
 
-    def _run_conversion(self, input_path: Path, output_path: Path, sr: int | None) -> None:
+    def _run_conversion(
+        self, input_path: Path, output_path: Path, sr: int | None
+    ) -> None:
         try:
             mode = self._mode.get()
             if mode == "excel2wav":
