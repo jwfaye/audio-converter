@@ -51,9 +51,4 @@ def save_audio(
         sample_rate: Sample rate in Hz.
     """
     audio_data = np.asarray(audio_data, dtype=np.float32)
-
-    max_val = np.abs(audio_data).max()
-    if max_val > 1.0:
-        audio_data = audio_data / max_val
-
     sf.write(str(file_path), audio_data, sample_rate, subtype="PCM_16")

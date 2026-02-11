@@ -11,6 +11,8 @@ from openpyxl import Workbook, load_workbook
 
 from audio_converter.audio_io import load_audio, save_audio
 
+INT16_MAX = 32768.0
+
 
 class ConversionError(Exception):
     """Raised when a conversion fails."""
@@ -62,9 +64,7 @@ def excel_to_wav(
         )
 
     audio_data = np.array(samples, dtype=np.float32)
-
-    if np.abs(audio_data).max() > 1.0:
-        audio_data = audio_data / np.abs(audio_data).max()
+    audio_data = audio_data / INT16_MAX
 
     save_audio(output_path, audio_data, sample_rate)
 
@@ -102,8 +102,9 @@ def wav_to_excel(
     ws = wb.active
     ws.title = "audio"
 
-    for col_idx, sample in enumerate(audio_data, start=1):
-        ws.cell(row=1, column=col_idx, value=float(sample))
+    int16_data = (audio_data * INT16_MAX).astype(np.int16)
+    for col_idx, sample in enumerate(int16_data, start=1):
+        ws.cell(row=1, column=col_idx, value=int(sample))
 
     try:
         wb.save(output_path)
