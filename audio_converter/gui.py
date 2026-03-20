@@ -1,272 +1,477 @@
-"""Tkinter GUI for audio-converter (Excel <-> WAV)."""
+"""Dark-themed Tkinter GUI for audio-converter with auditory pipeline."""
 
 import re
 import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
 from pathlib import Path
+from tkinter import filedialog
 
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from audio_converter.converter import ConversionError, excel_to_wav, wav_to_excel
+from audio_converter.converter import (
+    ConversionError,
+    excel_to_wav,
+    wav_to_pipeline_excel,
+)
 
-EXCEL_FILETYPES = [("Fichiers Excel", "*.xlsx"), ("Tous les fichiers", "*.*")]
-WAV_FILETYPES = [("Fichiers WAV", "*.wav"), ("Tous les fichiers", "*.*")]
+# ── Theme ─────────────────────────────────────────────────────────────────
+
+C = {
+    "bg": "#1a1a2e",
+    "card": "#16213e",
+    "border": "#0f3460",
+    "text": "#e0e0e0",
+    "dim": "#7a7a8e",
+    "accent": "#2ecc71",
+    "accent_h": "#27ae60",
+    "white": "#ffffff",
+    "drop": "#0f3460",
+    "drop_h": "#1a4a7a",
+    "drop_t": "#8899aa",
+    "entry": "#0d1b2a",
+    "sep": "#2a2a4e",
+    "status": "#0d1b2a",
+}
+
+_SUPPORTED = {".xlsx", ".wav"}
 
 
-_SUPPORTED_EXTENSIONS = {".xlsx", ".wav"}
-
-
-def _clean_drop_path(raw: str) -> str:
-    """Normalize a path received from tkinterdnd2.
-
-    On Windows, paths containing spaces are wrapped in braces: ``{C:/My Folder/file.wav}``.
-    Multiple files may be space-separated; we only keep the first one.
-    """
+def _clean_drop(raw: str) -> str:
     raw = raw.strip()
     m = re.match(r"\{([^}]+)\}", raw)
-    if m:
-        return m.group(1)
-    return raw.split()[0] if raw else raw
+    return m.group(1) if m else (raw.split()[0] if raw else raw)
 
 
 class App(TkinterDnD.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Audio Converter")
+        self.configure(bg=C["bg"])
         self.resizable(False, False)
 
-        self._mode = tk.StringVar(value="excel2wav")
+        # State
         self._input_path = tk.StringVar()
         self._output_path = tk.StringVar()
         self._sample_rate = tk.StringVar(value="16000")
         self._status = tk.StringVar(value="Prêt.")
+        self._mode = "wav"
 
-        self._build_ui()
-        self._on_mode_change()
+        # Pipeline options
+        self._chk_audio = tk.BooleanVar(value=True)
+        self._chk_periphery = tk.BooleanVar(value=True)
+        self._chk_integration = tk.BooleanVar(value=False)
+        self._tau = tk.StringVar(value="50")
+        self._decimation = tk.StringVar(value="100")
 
-    def _build_ui(self) -> None:
-        pad = {"padx": 8, "pady": 4}
+        self._build()
+        self._set_mode("wav")
 
-        mode_frame = ttk.LabelFrame(self, text="Mode")
-        mode_frame.grid(row=0, column=0, sticky="ew", **pad)
+    # ── Build ─────────────────────────────────────────────────────────
 
-        ttk.Radiobutton(
-            mode_frame,
-            text="Excel → WAV",
-            variable=self._mode,
-            value="excel2wav",
-            command=self._on_mode_change,
-        ).grid(row=0, column=0, padx=12, pady=6)
-        ttk.Radiobutton(
-            mode_frame,
-            text="WAV → Excel",
-            variable=self._mode,
-            value="wav2excel",
-            command=self._on_mode_change,
-        ).grid(row=0, column=1, padx=12, pady=6)
+    def _build(self) -> None:
+        # ── Drop zone ────────────────────────────────────────────────
+        self._drop_frame = tk.Frame(self, bg=C["bg"])
+        self._drop_frame.pack(fill="x", padx=16, pady=(16, 8))
 
-        self._drop_label = tk.Label(
-            self,
-            text="Glissez un fichier .xlsx ou .wav ici",
-            relief="groove",
-            bg="#e8f0fe",
-            fg="#555555",
-            font=("Segoe UI", 11),
-            height=3,
+        self._drop_zone = tk.Label(
+            self._drop_frame,
+            text="Glissez un fichier .wav ou .xlsx ici\n───\nou cliquez pour parcourir",
+            bg=C["drop"],
+            fg=C["drop_t"],
+            font=("Helvetica", 11),
             cursor="hand2",
+            pady=28,
+            highlightbackground=C["border"],
+            highlightthickness=1,
         )
-        self._drop_label.grid(row=1, column=0, sticky="ew", **pad)
-        self._drop_label.drop_target_register(DND_FILES)
-        self._drop_label.dnd_bind("<<Drop>>", self._on_drop)
-        self._drop_label.dnd_bind("<<DragEnter>>", self._on_drag_enter)
-        self._drop_label.dnd_bind("<<DragLeave>>", self._on_drag_leave)
-
-        files_frame = ttk.LabelFrame(self, text="Fichiers")
-        files_frame.grid(row=2, column=0, sticky="ew", **pad)
-        files_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(files_frame, text="Entrée :").grid(
-            row=0, column=0, sticky="w", padx=4, pady=4
+        self._drop_zone.pack(fill="x")
+        self._drop_zone.bind("<Button-1>", lambda e: self._browse_input())
+        self._drop_zone.drop_target_register(DND_FILES)
+        self._drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+        self._drop_zone.dnd_bind(
+            "<<DragEnter>>", lambda e: self._drop_zone.config(bg=C["drop_h"])
         )
-        ttk.Entry(files_frame, textvariable=self._input_path, width=50).grid(
-            row=0, column=1, sticky="ew", padx=4, pady=4
-        )
-        ttk.Button(files_frame, text="Parcourir", command=self._browse_input).grid(
-            row=0, column=2, padx=4, pady=4
+        self._drop_zone.dnd_bind(
+            "<<DragLeave>>", lambda e: self._drop_zone.config(bg=C["drop"])
         )
 
-        ttk.Label(files_frame, text="Sortie :").grid(
-            row=1, column=0, sticky="w", padx=4, pady=4
+        # ── Output section ───────────────────────────────────────────
+        self._output_section, output_card = self._make_section("SORTIE")
+        row = tk.Frame(output_card, bg=C["card"])
+        row.pack(fill="x", padx=8, pady=8)
+
+        tk.Entry(
+            row,
+            textvariable=self._output_path,
+            bg=C["entry"],
+            fg=C["text"],
+            insertbackground=C["text"],
+            relief="flat",
+            font=("Helvetica", 10),
+        ).pack(side="left", fill="x", expand=True, ipady=4)
+
+        self._make_btn(row, "Parcourir", self._browse_output).pack(
+            side="right", padx=(8, 0)
         )
-        ttk.Entry(files_frame, textvariable=self._output_path, width=50).grid(
-            row=1, column=1, sticky="ew", padx=4, pady=4
+
+        # ── Sample rate section (xlsx mode) ──────────────────────────
+        self._sr_section, sr_card = self._make_section(
+            "FRÉQUENCE D'ÉCHANTILLONNAGE"
         )
-        ttk.Button(files_frame, text="Parcourir", command=self._browse_output).grid(
-            row=1, column=2, padx=4, pady=4
+        sr_row = tk.Frame(sr_card, bg=C["card"])
+        sr_row.pack(fill="x", padx=8, pady=8)
+
+        tk.Label(
+            sr_row,
+            text="Hz :",
+            bg=C["card"],
+            fg=C["dim"],
+            font=("Helvetica", 10),
+        ).pack(side="left")
+
+        tk.Entry(
+            sr_row,
+            textvariable=self._sample_rate,
+            bg=C["entry"],
+            fg=C["text"],
+            insertbackground=C["text"],
+            relief="flat",
+            font=("Helvetica", 10),
+            width=8,
+        ).pack(side="left", padx=(8, 0), ipady=4)
+
+        # ── Pipeline section (wav mode) ──────────────────────────────
+        self._pipeline_section, pipeline_card = self._make_section(
+            "PIPELINE PÉRIPHÉRIE AUDITIVE"
+        )
+        p = tk.Frame(pipeline_card, bg=C["card"])
+        p.pack(fill="x", padx=8, pady=8)
+
+        self._make_check(p, "Audio brut", self._chk_audio)
+        self._make_sep(p)
+        self._make_check(p, "Périphérie (memo MA + memo CK)", self._chk_periphery)
+        self._make_sep(p)
+        self._make_check(
+            p,
+            "Intégration temporelle",
+            self._chk_integration,
+            command=self._toggle_integration,
         )
 
-        sr_frame = ttk.LabelFrame(self, text="Fréquence d'échantillonnage")
-        sr_frame.grid(row=3, column=0, sticky="ew", **pad)
+        # Integration params (initially hidden)
+        self._int_params = tk.Frame(p, bg=C["card"])
+        self._make_param_row(self._int_params, "Tau", self._tau)
+        self._make_param_row(self._int_params, "Décimation", self._decimation)
 
-        ttk.Label(sr_frame, text="Hz :").grid(row=0, column=0, padx=4, pady=4)
-        self._sr_entry = ttk.Entry(sr_frame, textvariable=self._sample_rate, width=10)
-        self._sr_entry.grid(row=0, column=1, padx=4, pady=4)
-        self._sr_hint = ttk.Label(sr_frame, text="")
-        self._sr_hint.grid(row=0, column=2, padx=4, pady=4)
+        # ── Convert button ───────────────────────────────────────────
+        self._convert_btn = tk.Button(
+            self,
+            text="▶  CONVERTIR",
+            bg=C["accent"],
+            fg=C["white"],
+            activebackground=C["accent_h"],
+            activeforeground=C["white"],
+            relief="flat",
+            font=("Helvetica", 12, "bold"),
+            cursor="hand2",
+            command=self._convert,
+            pady=10,
+        )
+        self._convert_btn.pack(fill="x", padx=16, pady=(8, 8))
+        self._convert_btn.bind(
+            "<Enter>", lambda e: self._convert_btn.config(bg=C["accent_h"])
+        )
+        self._convert_btn.bind(
+            "<Leave>", lambda e: self._convert_btn.config(bg=C["accent"])
+        )
 
-        self._convert_btn = ttk.Button(self, text="Convertir", command=self._convert)
-        self._convert_btn.grid(row=4, column=0, sticky="ew", **pad)
-
-        ttk.Label(self, textvariable=self._status, relief="sunken", anchor="w").grid(
-            row=5,
-            column=0,
-            sticky="ew",
+        # ── Status bar ───────────────────────────────────────────────
+        tk.Label(
+            self,
+            textvariable=self._status,
+            bg=C["status"],
+            fg=C["dim"],
+            font=("Helvetica", 9),
+            anchor="w",
             padx=8,
-            pady=(0, 8),
+            pady=4,
+        ).pack(fill="x", padx=16, pady=(0, 16))
+
+    # ── Widget helpers ────────────────────────────────────────────────
+
+    def _make_section(self, title: str) -> tuple[tk.Frame, tk.Frame]:
+        container = tk.Frame(self, bg=C["bg"])
+        container.pack(fill="x", padx=16, pady=4)
+
+        tk.Label(
+            container,
+            text=title,
+            bg=C["bg"],
+            fg=C["dim"],
+            font=("Helvetica", 9, "bold"),
+            anchor="w",
+        ).pack(fill="x", padx=4, pady=(0, 2))
+
+        card = tk.Frame(
+            container,
+            bg=C["card"],
+            highlightbackground=C["border"],
+            highlightthickness=1,
         )
+        card.pack(fill="x")
 
-    def _on_mode_change(self) -> None:
-        if self._mode.get() == "excel2wav":
-            self._sr_hint.config(text="(requis)")
+        return container, card
+
+    def _make_btn(self, parent: tk.Widget, text: str, command) -> tk.Button:
+        btn = tk.Button(
+            parent,
+            text=text,
+            bg=C["border"],
+            fg=C["text"],
+            activebackground=C["drop_h"],
+            activeforeground=C["text"],
+            relief="flat",
+            font=("Helvetica", 9),
+            cursor="hand2",
+            command=command,
+        )
+        btn.bind("<Enter>", lambda e: btn.config(bg=C["drop_h"]))
+        btn.bind("<Leave>", lambda e: btn.config(bg=C["border"]))
+        return btn
+
+    def _make_check(
+        self,
+        parent: tk.Widget,
+        text: str,
+        variable: tk.BooleanVar,
+        command=None,
+    ) -> tk.Checkbutton:
+        cb = tk.Checkbutton(
+            parent,
+            text=text,
+            variable=variable,
+            bg=C["card"],
+            fg=C["text"],
+            selectcolor=C["entry"],
+            activebackground=C["card"],
+            activeforeground=C["text"],
+            font=("Helvetica", 10),
+            anchor="w",
+            command=command,
+        )
+        cb.pack(fill="x", pady=2)
+        return cb
+
+    def _make_sep(self, parent: tk.Widget) -> None:
+        tk.Frame(parent, bg=C["sep"], height=1).pack(fill="x", pady=4)
+
+    def _make_param_row(
+        self, parent: tk.Widget, label: str, variable: tk.StringVar
+    ) -> None:
+        row = tk.Frame(parent, bg=C["card"])
+        row.pack(fill="x", pady=2)
+
+        tk.Label(
+            row,
+            text=label,
+            bg=C["card"],
+            fg=C["dim"],
+            font=("Helvetica", 9),
+            width=14,
+            anchor="w",
+        ).pack(side="left", padx=(24, 0))
+
+        tk.Entry(
+            row,
+            textvariable=variable,
+            bg=C["entry"],
+            fg=C["text"],
+            insertbackground=C["text"],
+            relief="flat",
+            font=("Helvetica", 10),
+            width=8,
+        ).pack(side="left", ipady=3)
+
+    # ── Mode switching ────────────────────────────────────────────────
+
+    def _set_mode(self, mode: str) -> None:
+        self._mode = mode
+        if mode == "wav":
+            self._sr_section.pack_forget()
+            self._pipeline_section.pack(
+                after=self._output_section, fill="x", padx=16, pady=4
+            )
         else:
-            self._sr_hint.config(text="(optionnel — rééchantillonnage)")
+            self._pipeline_section.pack_forget()
+            self._sr_section.pack(
+                after=self._output_section, fill="x", padx=16, pady=4
+            )
+        self._resize()
 
-    def _on_drag_enter(self, event) -> None:
-        self._drop_label.config(bg="#cfe2ff", fg="#003399")
+    def _toggle_integration(self) -> None:
+        if self._chk_integration.get():
+            self._int_params.pack(fill="x", pady=(4, 0))
+        else:
+            self._int_params.pack_forget()
+        self._resize()
 
-    def _on_drag_leave(self, event) -> None:
-        self._drop_label.config(bg="#e8f0fe", fg="#555555")
+    def _resize(self) -> None:
+        self.update_idletasks()
+        self.geometry("")
+
+    # ── Drag & drop ───────────────────────────────────────────────────
 
     def _on_drop(self, event) -> None:
-        self._drop_label.config(bg="#e8f0fe", fg="#555555")
-        path_str = _clean_drop_path(event.data)
+        self._drop_zone.config(bg=C["drop"])
+        path_str = _clean_drop(event.data)
         if not path_str:
             return
 
         p = Path(path_str)
         ext = p.suffix.lower()
-        if ext not in _SUPPORTED_EXTENSIONS:
+        if ext not in _SUPPORTED:
             self._status.set(
-                f"Extension « {ext} » non supportée. Déposez un .xlsx ou .wav."
+                f"Extension \u00ab {ext} \u00bb non support\u00e9e. "
+                "D\u00e9posez un .xlsx ou .wav."
             )
             return
 
-        if ext == ".xlsx":
-            self._mode.set("excel2wav")
-        else:
-            self._mode.set("wav2excel")
-        self._on_mode_change()
-
         self._input_path.set(str(p))
-        self._auto_output(str(p))
-        self._status.set(f"Fichier chargé : {p.name}")
+        self._auto_output(p)
+
+        if ext == ".xlsx":
+            self._set_mode("xlsx")
+        else:
+            self._set_mode("wav")
+
+        self._status.set(f"Fichier charg\u00e9 : {p.name}")
+
+    # ── File browsing ─────────────────────────────────────────────────
 
     def _browse_input(self) -> None:
-        if self._mode.get() == "excel2wav":
-            ft = EXCEL_FILETYPES
-        else:
-            ft = WAV_FILETYPES
+        path = filedialog.askopenfilename(
+            filetypes=[
+                ("Audio / Excel", "*.wav *.xlsx"),
+                ("Tous les fichiers", "*.*"),
+            ]
+        )
+        if not path:
+            return
 
-        path = filedialog.askopenfilename(filetypes=ft)
-        if path:
-            self._input_path.set(path)
-            self._auto_output(path)
+        p = Path(path)
+        self._input_path.set(str(p))
+        self._auto_output(p)
+
+        if p.suffix.lower() == ".xlsx":
+            self._set_mode("xlsx")
+        else:
+            self._set_mode("wav")
+
+        self._status.set(f"Fichier charg\u00e9 : {p.name}")
 
     def _browse_output(self) -> None:
-        if self._mode.get() == "excel2wav":
-            ft = WAV_FILETYPES
+        if self._mode == "xlsx":
+            ft = [("Fichiers WAV", "*.wav"), ("Tous", "*.*")]
         else:
-            ft = EXCEL_FILETYPES
+            ft = [("Fichiers Excel", "*.xlsx"), ("Tous", "*.*")]
 
         path = filedialog.asksaveasfilename(filetypes=ft)
         if path:
             self._output_path.set(path)
 
-    def _auto_output(self, input_path: str) -> None:
-        """Generate an output path from the input path."""
-        p = Path(input_path)
-        if self._mode.get() == "excel2wav":
+    def _auto_output(self, p: Path) -> None:
+        if p.suffix.lower() == ".xlsx":
             self._output_path.set(str(p.with_suffix(".wav")))
         else:
             self._output_path.set(str(p.with_suffix(".xlsx")))
 
-    def _validate(self) -> tuple[Path, Path, int | None] | None:
-        """Validate inputs. Returns (input, output, sample_rate) or None."""
+    # ── Validation ────────────────────────────────────────────────────
+
+    def _validate(self) -> tuple[Path, Path] | None:
         input_str = self._input_path.get().strip()
         output_str = self._output_path.get().strip()
-        sr_str = self._sample_rate.get().strip()
 
         if not input_str:
-            self._status.set("Erreur : aucun fichier d'entrée sélectionné.")
+            self._status.set("Erreur : aucun fichier d'entr\u00e9e s\u00e9lectionn\u00e9.")
             return None
 
         input_path = Path(input_str)
         if not input_path.exists():
-            self._status.set(f"Erreur : fichier introuvable — {input_path}")
+            self._status.set(f"Erreur : fichier introuvable \u2014 {input_path}")
             return None
 
         if not output_str:
-            self._status.set("Erreur : aucun fichier de sortie spécifié.")
+            self._status.set("Erreur : aucun fichier de sortie sp\u00e9cifi\u00e9.")
             return None
 
-        output_path = Path(output_str)
+        return input_path, Path(output_str)
 
-        mode = self._mode.get()
-        if mode == "excel2wav":
-            if not sr_str:
-                self._status.set(
-                    "Erreur : la fréquence d'échantillonnage est requise pour Excel → WAV."
-                )
-                return None
-            try:
-                sr = int(sr_str)
-                if sr <= 0:
-                    raise ValueError
-            except ValueError:
-                self._status.set("Erreur : fréquence d'échantillonnage invalide.")
-                return None
-        else:
-            sr = None
-            if sr_str:
-                try:
-                    sr = int(sr_str)
-                    if sr <= 0:
-                        raise ValueError
-                except ValueError:
-                    self._status.set("Erreur : fréquence d'échantillonnage invalide.")
-                    return None
-
-        return input_path, output_path, sr
+    # ── Conversion (threaded) ─────────────────────────────────────────
 
     def _convert(self) -> None:
         validated = self._validate()
         if validated is None:
             return
 
-        input_path, output_path, sr = validated
+        input_path, output_path = validated
+
+        if self._mode == "xlsx":
+            sr_str = self._sample_rate.get().strip()
+            if not sr_str:
+                self._status.set(
+                    "Erreur : la fr\u00e9quence d'\u00e9chantillonnage est requise."
+                )
+                return
+            try:
+                sr = int(sr_str)
+                if sr <= 0:
+                    raise ValueError
+            except ValueError:
+                self._status.set(
+                    "Erreur : fr\u00e9quence d'\u00e9chantillonnage invalide."
+                )
+                return
 
         self._convert_btn.config(state="disabled")
         self._status.set("Conversion en cours...")
 
         thread = threading.Thread(
             target=self._run_conversion,
-            args=(input_path, output_path, sr),
+            args=(input_path, output_path),
             daemon=True,
         )
         thread.start()
 
-    def _run_conversion(
-        self, input_path: Path, output_path: Path, sr: int | None
-    ) -> None:
+    def _run_conversion(self, input_path: Path, output_path: Path) -> None:
+        def on_progress(msg: str) -> None:
+            self.after(0, self._status.set, msg)
+
         try:
-            mode = self._mode.get()
-            if mode == "excel2wav":
+            if self._mode == "xlsx":
+                sr = int(self._sample_rate.get())
                 result = excel_to_wav(input_path, output_path, sr)
             else:
-                result = wav_to_excel(input_path, output_path, sr)
+                tau = int(self._tau.get()) if self._tau.get().strip() else 50
+                dec = (
+                    int(self._decimation.get())
+                    if self._decimation.get().strip()
+                    else 100
+                )
+                result = wav_to_pipeline_excel(
+                    input_path,
+                    output_path,
+                    export_audio=self._chk_audio.get(),
+                    export_periphery=self._chk_periphery.get(),
+                    export_integration=self._chk_integration.get(),
+                    tau=tau,
+                    decimation_factor=dec,
+                    progress_callback=on_progress,
+                )
 
-            msg = f"Terminé : {result.output_path.name} ({result.num_samples} échantillons, {result.sample_rate} Hz)"
+            msg = (
+                f"Termin\u00e9 : {result.output_path.name} "
+                f"({result.num_samples} \u00e9chantillons, {result.sample_rate} Hz)"
+            )
             self.after(0, self._on_done, msg)
 
         except ConversionError as exc:

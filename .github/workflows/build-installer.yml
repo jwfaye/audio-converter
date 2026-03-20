@@ -12,6 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout sound-perception
+        uses: actions/checkout@v4
+        with:
+          repository: AnotherBrain/sound-perception
+          path: sound-perception
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -20,6 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pyinstaller
+          pip install -e ./sound-perception
           pip install -e .
 
       - name: Build executable with PyInstaller

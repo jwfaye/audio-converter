@@ -11,16 +11,30 @@ block_cipher = None
 # Collect tkinterdnd2 native binaries (TkDND shared libraries)
 dnd_datas, dnd_binaries, dnd_hiddenimports = collect_all("tkinterdnd2")
 
+# Collect soundperception calibration data files
+sp_datas, sp_binaries, sp_hiddenimports = collect_all("soundperception")
+
 a = Analysis(
     ["audio_converter/gui.py"],
     pathex=[],
-    binaries=dnd_binaries,
-    datas=dnd_datas,
+    binaries=dnd_binaries + sp_binaries,
+    datas=dnd_datas + sp_datas,
     hiddenimports=[
         "numpy",
         "soundfile",
         "scipy.signal",
         "openpyxl",
+        "soundperception",
+        "soundperception.audition",
+        "soundperception.audition.config",
+        "soundperception.audition.core",
+        "soundperception.audition.core.periphery",
+        "soundperception.audition.core.integration",
+        "soundperception.audition.core._kernels",
+        "gammatone",
+        "gammatone.filters",
+        "numba",
+        "pandas",
     ] + dnd_hiddenimports,
     hookspath=[],
     hooksconfig={},
