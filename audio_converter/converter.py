@@ -13,6 +13,7 @@ from openpyxl import Workbook, load_workbook
 from audio_converter.audio_io import load_audio, save_audio
 
 INT16_MAX = 32768.0
+EXCEL_MAX_COLS = 16384
 
 
 class ConversionError(Exception):
@@ -51,12 +52,20 @@ def excel_to_wav(
     except Exception as exc:
         raise ConversionError(f"Impossible d'ouvrir le fichier Excel : {exc}") from exc
 
-    ws = wb.active
+    audio_sheets = sorted(
+        [s for s in wb.sheetnames if s.startswith("audio")],
+        key=lambda s: (int(s.split("_")[1]) if "_" in s else 0),
+    )
+    if not audio_sheets:
+        audio_sheets = [wb.sheetnames[0]]
+
     samples: list[float] = []
-    for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
-        for val in row:
-            if val is not None:
-                samples.append(float(val))
+    for sheet_name in audio_sheets:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
+            for val in row:
+                if val is not None:
+                    samples.append(float(val))
     wb.close()
 
     if not samples:
@@ -100,12 +109,10 @@ def wav_to_excel(
         raise ConversionError(f"Impossible de lire le fichier WAV : {exc}") from exc
 
     wb = Workbook()
-    ws = wb.active
-    ws.title = "audio"
+    wb.remove(wb.active)
 
     int16_data = (audio_data * INT16_MAX).astype(np.int16)
-    for col_idx, sample in enumerate(int16_data, start=1):
-        ws.cell(row=1, column=col_idx, value=int(sample))
+    _write_audio_sheets(wb, int16_data)
 
     try:
         wb.save(output_path)
@@ -180,9 +187,8 @@ def wav_to_pipeline_excel(
 
     if export_audio:
         _report("Export audio brut...")
-        ws = wb.create_sheet("audio")
         int16_data = (audio_data * INT16_MAX).astype(np.int16)
-        ws.append([int(s) for s in int16_data])
+        _write_audio_sheets(wb, int16_data)
 
     needs_periphery = export_periphery or export_integration
     if needs_periphery:
@@ -235,6 +241,22 @@ def wav_to_pipeline_excel(
         num_samples=len(audio_data),
         sample_rate=sr,
     )
+
+
+def _write_audio_sheets(wb: Workbook, int16_data: np.ndarray) -> None:
+    """Write int16 audio samples across one or more 'audio' sheets.
+
+    Each sheet holds up to EXCEL_MAX_COLS (16 384) samples in row 1.
+    Sheets are named audio, audio_2, audio_3, etc.
+    """
+    chunks = [
+        int16_data[i : i + EXCEL_MAX_COLS]
+        for i in range(0, len(int16_data), EXCEL_MAX_COLS)
+    ]
+    for idx, chunk in enumerate(chunks):
+        name = "audio" if idx == 0 else f"audio_{idx + 1}"
+        ws = wb.create_sheet(name)
+        ws.append([int(s) for s in chunk])
 
 
 def _write_2d_array(ws, array: np.ndarray) -> None:
