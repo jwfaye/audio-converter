@@ -35,7 +35,7 @@ a = Analysis(
         "gammatone.filters",
         "numba",
         "pandas",
-    ] + dnd_hiddenimports,
+    ] + dnd_hiddenimports + sp_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
