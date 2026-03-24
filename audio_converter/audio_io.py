@@ -1,6 +1,9 @@
-"""Audio I/O operations using soundfile with libsndfile backend.
+"""Audio I/O helpers backed by *soundfile* (libsndfile).
 
-Adapted from soundperception/utils/audio_io.py
+Provides :func:`load_audio` and :func:`save_audio` for reading/writing
+WAV files as float32 arrays normalised to ``[-1, 1]``.
+
+Adapted from ``soundperception/utils/audio_io.py``.
 """
 
 from pathlib import Path
@@ -14,14 +17,20 @@ def load_audio(
     file_path: str | Path,
     target_sample_rate: int | None = None,
 ) -> tuple[np.ndarray, int]:
-    """Load a WAV file and return mono float32 samples in [-1, 1].
+    """Load a WAV file and return mono float32 samples in ``[-1, 1]``.
+
+    Multi-channel files are down-mixed to mono by averaging.  If
+    *target_sample_rate* differs from the file's native rate, the signal
+    is resampled with :func:`scipy.signal.resample`.
 
     Args:
-        file_path: Path to audio file.
-        target_sample_rate: Target sample rate (Hz). If None, use original.
+        file_path: Path to the audio file (WAV, FLAC, OGG, ...).
+        target_sample_rate: Desired sample rate in Hz.  ``None`` keeps
+            the original rate.
 
     Returns:
-        (audio_data, sample_rate) where audio_data is float32 in [-1, 1].
+        A tuple ``(audio_data, sample_rate)`` where *audio_data* is a
+        1-D float32 array in ``[-1, 1]``.
     """
     audio_data, original_sr = sf.read(str(file_path), always_2d=False)
 
@@ -43,11 +52,11 @@ def save_audio(
     audio_data: np.ndarray,
     sample_rate: int,
 ) -> None:
-    """Save audio samples to a WAV file.
+    """Save audio samples to a 16-bit PCM WAV file.
 
     Args:
-        file_path: Output file path.
-        audio_data: float32 or float64 samples in [-1, 1].
+        file_path: Destination path (parent directory must exist).
+        audio_data: Float32 or float64 samples in ``[-1, 1]``.
         sample_rate: Sample rate in Hz.
     """
     audio_data = np.asarray(audio_data, dtype=np.float32)

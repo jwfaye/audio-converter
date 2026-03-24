@@ -1,6 +1,16 @@
 """Business logic for converting between Excel and WAV formats.
 
-Shared by CLI and GUI — no dependency on argparse, print, or sys.exit().
+This module contains the core conversion functions shared by the CLI
+(:mod:`audio_converter.cli`) and the GUI (:mod:`audio_converter.gui`).
+It has no dependency on ``argparse``, ``print``, or ``sys.exit()``.
+
+The main entry points are:
+
+* :func:`excel_to_wav` -- single-sheet Excel (int16 samples) to WAV.
+* :func:`wav_to_excel` -- WAV to single-sheet Excel.
+* :func:`wav_to_pipeline_excel` -- WAV through the auditory periphery
+  pipeline, producing a multi-sheet Excel with selectable stages
+  (audio, peaks, memo_ma/ck, integrated memo_ma/ck).
 """
 
 from collections.abc import Callable
@@ -17,12 +27,22 @@ EXCEL_MAX_COLS = 16384
 
 
 class ConversionError(Exception):
-    """Raised when a conversion fails."""
+    """Raised when a conversion cannot complete.
+
+    Typical causes include missing input files, unreadable formats,
+    write permission errors, or a missing ``soundperception`` install.
+    """
 
 
 @dataclass
 class ConversionResult:
-    """Result of a successful conversion."""
+    """Result of a successful conversion.
+
+    Attributes:
+        output_path: Absolute or relative path to the written file.
+        num_samples: Total number of audio samples in the output.
+        sample_rate: Sample rate of the audio in Hz.
+    """
 
     output_path: Path
     num_samples: int
@@ -130,6 +150,7 @@ def wav_to_pipeline_excel(
     input_path: Path,
     output_path: Path,
     export_audio: bool = True,
+    export_peaks: bool = False,
     export_periphery: bool = True,
     export_integration: bool = False,
     tau: int = 50,
@@ -138,26 +159,41 @@ def wav_to_pipeline_excel(
 ) -> ConversionResult:
     """Convert a WAV file to a multi-sheet Excel with auditory pipeline stages.
 
-    Each enabled stage produces one or more sheets:
-    - audio: raw signal (1 row)
-    - memo_ma / memo_ck: auditory nerve output (65 channels x n_samples)
-    - memo_ma_int / memo_ck_int: after temporal integration (65 x n_decimated)
+    The audio is resampled to 16 kHz and scaled to int16 before being fed
+    to :class:`~soundperception.audition.core.periphery.AuditoryPeriphery`.
+    Each enabled stage produces one or more Excel sheets:
+
+    * ``audio`` -- raw int16 signal (1 row per chunk of 16 384 samples).
+    * ``peaks`` -- peak-extracted signal after Stage 4
+      (65 channels x n_samples).  When both *export_audio* and
+      *export_peaks* are ``True``, the audio is appended as the last row
+      of the ``peaks`` sheet instead of a separate sheet.
+    * ``memo_ma`` / ``memo_ck`` -- auditory nerve amplitude and temporal
+      memory (65 channels x n_samples).
+    * ``memo_ma_int`` / ``memo_ck_int`` -- temporally integrated and
+      decimated versions of memo_ma / memo_ck
+      (65 channels x n_decimated).
 
     Args:
-        input_path: Path to the input .wav file.
-        output_path: Path to the output .xlsx file.
-        export_audio: Include raw audio sheet.
-        export_periphery: Include memo_ma and memo_ck sheets.
-        export_integration: Include integrated memo_ma and memo_ck sheets.
-        tau: Temporal integration time constant (default: 50).
-        decimation_factor: Decimation factor (default: 100).
-        progress_callback: Optional callback for progress messages.
+        input_path: Path to the input ``.wav`` file.
+        output_path: Path to the output ``.xlsx`` file.
+        export_audio: Include raw audio data.
+        export_peaks: Include the peaks sheet (Stage 4 output).
+        export_periphery: Include ``memo_ma`` and ``memo_ck`` sheets.
+        export_integration: Include temporally integrated sheets.
+        tau: Temporal integration time constant in samples.
+        decimation_factor: Decimation factor for temporal integration.
+        progress_callback: Called with a short status string at each
+            processing step.  Useful for updating a GUI progress label.
 
     Returns:
-        ConversionResult with details of the written file.
+        A :class:`ConversionResult` with output path, sample count, and
+        sample rate.
 
     Raises:
-        ConversionError: If conversion fails or soundperception is not installed.
+        ConversionError: If the WAV cannot be read, the Excel cannot be
+            written, no stage is selected, or ``soundperception`` is not
+            installed.
     """
     def _report(msg: str) -> None:
         if progress_callback:
@@ -185,32 +221,37 @@ def wav_to_pipeline_excel(
     wb = Workbook()
     wb.remove(wb.active)
 
-    if export_audio:
+    if export_audio and not export_peaks:
         _report("Export audio brut...")
         int16_data = (audio_data * INT16_MAX).astype(np.int16)
         _write_audio_sheets(wb, int16_data)
 
-    needs_periphery = export_periphery or export_integration
-    if needs_periphery:
+    needs_pipeline = export_peaks or export_periphery or export_integration
+    if needs_pipeline:
         _report("Calcul périphérie auditive...")
         config = AuditoryPeripheryConfig.default()
         config.cochlear.sample_rate = sr
         periphery = AuditoryPeriphery(config)
-        # soundperception expects int16-scaled signal (peak extraction threshold > 1)
         signal_int16 = (audio_data * INT16_MAX).astype(np.int16)
-        result = periphery.process(signal_int16)
+        result = periphery.process(signal_int16, return_intermediate=True)
 
-        memo_ma = result["memo_ma"]
-        memo_ck = result["memo_ck"]
+        if export_peaks:
+            _report("Export peaks...")
+            ws_peaks = wb.create_sheet("peaks")
+            _write_2d_array(ws_peaks, result["peaks"])
+            if export_audio:
+                _report("Export audio brut (sous peaks)...")
+                int16_data = (audio_data * INT16_MAX).astype(np.int16)
+                _append_audio_row(ws_peaks, int16_data)
 
         if export_periphery:
             _report("Export memo MA...")
             ws_ma = wb.create_sheet("memo_ma")
-            _write_2d_array(ws_ma, memo_ma)
+            _write_2d_array(ws_ma, result["memo_ma"])
 
             _report("Export memo CK...")
             ws_ck = wb.create_sheet("memo_ck")
-            _write_2d_array(ws_ck, memo_ck)
+            _write_2d_array(ws_ck, result["memo_ck"])
 
         if export_integration:
             _report("Calcul intégration temporelle...")
@@ -219,7 +260,7 @@ def wav_to_pipeline_excel(
                 decimation_factor=decimation_factor,
             )
             integrator = TemporalIntegrator(int_config)
-            int_result = integrator.process(memo_ma, memo_ck)
+            int_result = integrator.process(result["memo_ma"], result["memo_ck"])
 
             _report("Export memo MA intégré...")
             ws_ma_int = wb.create_sheet("memo_ma_int")
@@ -246,10 +287,15 @@ def wav_to_pipeline_excel(
 
 
 def _write_audio_sheets(wb: Workbook, int16_data: np.ndarray) -> None:
-    """Write int16 audio samples across one or more 'audio' sheets.
+    """Write int16 audio samples across one or more ``audio`` sheets.
 
-    Each sheet holds up to EXCEL_MAX_COLS (16 384) samples in row 1.
-    Sheets are named audio, audio_2, audio_3, etc.
+    Excel columns are limited to :data:`EXCEL_MAX_COLS` (16 384), so
+    longer signals are split across sheets named ``audio``,
+    ``audio_2``, ``audio_3``, etc.
+
+    Args:
+        wb: Target workbook (sheets are created in-place).
+        int16_data: 1-D array of int16 audio samples.
     """
     chunks = [
         int16_data[i : i + EXCEL_MAX_COLS]
@@ -261,7 +307,22 @@ def _write_audio_sheets(wb: Workbook, int16_data: np.ndarray) -> None:
         ws.append([int(s) for s in chunk])
 
 
+def _append_audio_row(ws, int16_data: np.ndarray) -> None:
+    """Append int16 audio samples as a single row at the bottom of a sheet.
+
+    Args:
+        ws: Target worksheet (row is appended after existing data).
+        int16_data: 1-D array of int16 audio samples.
+    """
+    ws.append([int(s) for s in int16_data])
+
+
 def _write_2d_array(ws, array: np.ndarray) -> None:
-    """Write a 2D numpy array to a worksheet. Rows = channels, cols = samples."""
+    """Write a 2-D NumPy array to a worksheet (rows = channels, cols = samples).
+
+    Args:
+        ws: Target worksheet.
+        array: 2-D array of shape ``(n_channels, n_samples)``.
+    """
     for row in array:
         ws.append([float(v) for v in row])

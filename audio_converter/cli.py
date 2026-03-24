@@ -1,9 +1,14 @@
-"""CLI for converting between Excel and WAV formats.
+"""Command-line interface for converting between Excel and WAV formats.
 
-Usage:
+Sub-commands::
+
     audio-converter excel2wav input.xlsx output.wav --sample-rate 16000
-    audio-converter wav2excel input.wav output.xlsx --sample-rate 16000
-    audio-converter pipeline input.wav output.xlsx [--no-audio] [--no-periphery] [--integration] [--tau 50] [--decimation 100]
+    audio-converter wav2excel input.wav output.xlsx [--sample-rate 16000]
+    audio-converter pipeline  input.wav output.xlsx [OPTIONS]
+
+The ``pipeline`` sub-command runs the auditory periphery pipeline and
+exports selectable stages (audio, peaks, memo_ma/ck, integration) to a
+multi-sheet Excel workbook.
 """
 
 import argparse
@@ -19,7 +24,15 @@ from audio_converter.converter import (
 
 
 def handle_excel2wav(args: argparse.Namespace) -> None:
-    """CLI handler for Excel -> WAV conversion."""
+    """Handle the ``excel2wav`` sub-command.
+
+    Reads int16 samples from the first row of each ``audio*`` sheet and
+    writes a PCM-16 WAV file.
+
+    Args:
+        args: Parsed CLI arguments (``input``, ``output``,
+            ``sample_rate``).
+    """
     try:
         result = excel_to_wav(args.input, args.output, args.sample_rate)
         print(
@@ -31,7 +44,15 @@ def handle_excel2wav(args: argparse.Namespace) -> None:
 
 
 def handle_wav2excel(args: argparse.Namespace) -> None:
-    """CLI handler for WAV -> Excel conversion."""
+    """Handle the ``wav2excel`` sub-command.
+
+    Loads a WAV file, optionally resamples it, and writes int16 samples
+    to a single-row Excel sheet.
+
+    Args:
+        args: Parsed CLI arguments (``input``, ``output``,
+            ``sample_rate``).
+    """
     try:
         result = wav_to_excel(args.input, args.output, args.sample_rate)
         print(
@@ -43,7 +64,16 @@ def handle_wav2excel(args: argparse.Namespace) -> None:
 
 
 def handle_pipeline(args: argparse.Namespace) -> None:
-    """CLI handler for WAV -> pipeline Excel conversion."""
+    """Handle the ``pipeline`` sub-command.
+
+    Runs the auditory periphery pipeline on a WAV file and writes the
+    selected stages to a multi-sheet Excel workbook.
+
+    Args:
+        args: Parsed CLI arguments (``input``, ``output``,
+            ``no_audio``, ``no_periphery``, ``integration``, ``tau``,
+            ``decimation``).
+    """
     try:
         result = wav_to_pipeline_excel(
             args.input,
@@ -62,6 +92,11 @@ def handle_pipeline(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Entry point for the ``audio-converter`` CLI.
+
+    Parses arguments and dispatches to the appropriate sub-command
+    handler.
+    """
     parser = argparse.ArgumentParser(
         description="Convertir entre fichiers Excel et WAV",
     )
@@ -89,7 +124,6 @@ def main() -> None:
     )
     p_w2e.set_defaults(func=handle_wav2excel)
 
-    # pipeline
     p_pipe = subparsers.add_parser("pipeline", help="WAV → Excel multi-feuilles (pipeline périphérie)")
     p_pipe.add_argument("input", type=Path, help="Fichier WAV d'entrée (.wav)")
     p_pipe.add_argument("output", type=Path, help="Fichier Excel de sortie (.xlsx)")

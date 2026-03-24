@@ -1,4 +1,9 @@
-"""Dark-themed Tkinter GUI for audio-converter with auditory pipeline."""
+"""Dark-themed Tkinter GUI for audio-converter with auditory pipeline.
+
+The application window supports drag-and-drop of ``.wav`` and ``.xlsx``
+files (via *tkinterdnd2*) and exposes the auditory periphery pipeline
+stages as checkboxes (audio, peaks, periphery, integration).
+"""
 
 import re
 import threading
@@ -13,8 +18,6 @@ from audio_converter.converter import (
     excel_to_wav,
     wav_to_pipeline_excel,
 )
-
-# ── Theme ─────────────────────────────────────────────────────────────────
 
 C = {
     "bg": "#1a1a2e",
@@ -37,27 +40,50 @@ _SUPPORTED = {".xlsx", ".wav"}
 
 
 def _clean_drop(raw: str) -> str:
+    """Extract a single file path from a TkDND drop payload.
+
+    TkDND wraps paths containing spaces in braces (``{C:\\my path}``),
+    and may concatenate several paths separated by whitespace.  This
+    helper returns the first usable path.
+
+    Args:
+        raw: Raw string received from a ``<<Drop>>`` event.
+
+    Returns:
+        A cleaned file-path string.
+    """
     raw = raw.strip()
     m = re.match(r"\{([^}]+)\}", raw)
     return m.group(1) if m else (raw.split()[0] if raw else raw)
 
 
 class App(TkinterDnD.Tk):
+    """Main application window.
+
+    Handles two modes:
+
+    * **wav** mode -- WAV input, Excel pipeline output (with stage
+      checkboxes).
+    * **xlsx** mode -- Excel input, WAV output (with sample-rate
+      entry).
+
+    The mode switches automatically when a file is dropped or browsed.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self.title("Audio Converter")
         self.configure(bg=C["bg"])
         self.resizable(False, False)
 
-        # State
         self._input_path = tk.StringVar()
         self._output_path = tk.StringVar()
         self._sample_rate = tk.StringVar(value="16000")
         self._status = tk.StringVar(value="Prêt.")
         self._mode = "wav"
 
-        # Pipeline options
         self._chk_audio = tk.BooleanVar(value=True)
+        self._chk_peaks = tk.BooleanVar(value=False)
         self._chk_periphery = tk.BooleanVar(value=True)
         self._chk_integration = tk.BooleanVar(value=False)
         self._tau = tk.StringVar(value="50")
@@ -66,10 +92,8 @@ class App(TkinterDnD.Tk):
         self._build()
         self._set_mode("wav")
 
-    # ── Build ─────────────────────────────────────────────────────────
-
     def _build(self) -> None:
-        # ── Drop zone ────────────────────────────────────────────────
+        """Assemble all widgets (drop zone, output, pipeline options, button, status)."""
         self._drop_frame = tk.Frame(self, bg=C["bg"])
         self._drop_frame.pack(fill="x", padx=16, pady=(16, 8))
 
@@ -95,7 +119,6 @@ class App(TkinterDnD.Tk):
             "<<DragLeave>>", lambda e: self._drop_zone.config(bg=C["drop"])
         )
 
-        # ── Output section ───────────────────────────────────────────
         self._output_section, output_card = self._make_section("SORTIE")
         row = tk.Frame(output_card, bg=C["card"])
         row.pack(fill="x", padx=8, pady=8)
@@ -114,7 +137,6 @@ class App(TkinterDnD.Tk):
             side="right", padx=(8, 0)
         )
 
-        # ── Sample rate section (xlsx mode) ──────────────────────────
         self._sr_section, sr_card = self._make_section(
             "FRÉQUENCE D'ÉCHANTILLONNAGE"
         )
@@ -140,7 +162,6 @@ class App(TkinterDnD.Tk):
             width=8,
         ).pack(side="left", padx=(8, 0), ipady=4)
 
-        # ── Pipeline section (wav mode) ──────────────────────────────
         self._pipeline_section, pipeline_card = self._make_section(
             "PIPELINE PÉRIPHÉRIE AUDITIVE"
         )
@@ -148,6 +169,8 @@ class App(TkinterDnD.Tk):
         p.pack(fill="x", padx=8, pady=8)
 
         self._make_check(p, "Audio brut", self._chk_audio)
+        self._make_sep(p)
+        self._make_check(p, "Pics (peaks)", self._chk_peaks)
         self._make_sep(p)
         self._make_check(p, "Périphérie (memo MA + memo CK)", self._chk_periphery)
         self._make_sep(p)
@@ -158,12 +181,10 @@ class App(TkinterDnD.Tk):
             command=self._toggle_integration,
         )
 
-        # Integration params (initially hidden)
         self._int_params = tk.Frame(p, bg=C["card"])
         self._make_param_row(self._int_params, "Tau", self._tau)
         self._make_param_row(self._int_params, "Décimation", self._decimation)
 
-        # ── Convert button ───────────────────────────────────────────
         self._convert_btn = tk.Button(
             self,
             text="▶  CONVERTIR",
@@ -185,7 +206,6 @@ class App(TkinterDnD.Tk):
             "<Leave>", lambda e: self._convert_btn.config(bg=C["accent"])
         )
 
-        # ── Status bar ───────────────────────────────────────────────
         tk.Label(
             self,
             textvariable=self._status,
@@ -197,9 +217,17 @@ class App(TkinterDnD.Tk):
             pady=4,
         ).pack(fill="x", padx=16, pady=(0, 16))
 
-    # ── Widget helpers ────────────────────────────────────────────────
-
     def _make_section(self, title: str) -> tuple[tk.Frame, tk.Frame]:
+        """Create a labelled card section.
+
+        Args:
+            title: Section header text displayed above the card.
+
+        Returns:
+            A ``(container, card)`` tuple.  *container* is the outer
+            frame (used for ``pack_forget``); *card* is the inner frame
+            where child widgets should be added.
+        """
         container = tk.Frame(self, bg=C["bg"])
         container.pack(fill="x", padx=16, pady=4)
 
@@ -223,6 +251,16 @@ class App(TkinterDnD.Tk):
         return container, card
 
     def _make_btn(self, parent: tk.Widget, text: str, command) -> tk.Button:
+        """Create a themed button with hover effect.
+
+        Args:
+            parent: Parent widget.
+            text: Button label.
+            command: Callback invoked on click.
+
+        Returns:
+            The configured :class:`tk.Button`.
+        """
         btn = tk.Button(
             parent,
             text=text,
@@ -246,6 +284,17 @@ class App(TkinterDnD.Tk):
         variable: tk.BooleanVar,
         command=None,
     ) -> tk.Checkbutton:
+        """Create a themed checkbox.
+
+        Args:
+            parent: Parent widget.
+            text: Label displayed next to the checkbox.
+            variable: Boolean variable bound to the checkbox state.
+            command: Optional callback invoked on toggle.
+
+        Returns:
+            The configured :class:`tk.Checkbutton`.
+        """
         cb = tk.Checkbutton(
             parent,
             text=text,
@@ -263,11 +312,23 @@ class App(TkinterDnD.Tk):
         return cb
 
     def _make_sep(self, parent: tk.Widget) -> None:
+        """Insert a thin horizontal separator line.
+
+        Args:
+            parent: Parent widget.
+        """
         tk.Frame(parent, bg=C["sep"], height=1).pack(fill="x", pady=4)
 
     def _make_param_row(
         self, parent: tk.Widget, label: str, variable: tk.StringVar
     ) -> None:
+        """Create a label + text-entry row for a numeric parameter.
+
+        Args:
+            parent: Parent widget.
+            label: Parameter name shown to the left of the entry.
+            variable: String variable bound to the entry field.
+        """
         row = tk.Frame(parent, bg=C["card"])
         row.pack(fill="x", pady=2)
 
@@ -292,9 +353,13 @@ class App(TkinterDnD.Tk):
             width=8,
         ).pack(side="left", ipady=3)
 
-    # ── Mode switching ────────────────────────────────────────────────
-
     def _set_mode(self, mode: str) -> None:
+        """Switch between ``wav`` and ``xlsx`` UI modes.
+
+        Args:
+            mode: ``"wav"`` to show pipeline checkboxes, ``"xlsx"`` to
+                show the sample-rate entry.
+        """
         self._mode = mode
         if mode == "wav":
             self._sr_section.pack_forget()
@@ -309,6 +374,7 @@ class App(TkinterDnD.Tk):
         self._resize()
 
     def _toggle_integration(self) -> None:
+        """Show or hide the integration parameter fields (tau, decimation)."""
         if self._chk_integration.get():
             self._int_params.pack(fill="x", pady=(4, 0))
         else:
@@ -316,12 +382,17 @@ class App(TkinterDnD.Tk):
         self._resize()
 
     def _resize(self) -> None:
+        """Recalculate window geometry after widget visibility changes."""
         self.update_idletasks()
         self.geometry("")
 
-    # ── Drag & drop ───────────────────────────────────────────────────
-
     def _on_drop(self, event) -> None:
+        """Handle a file dropped onto the drop zone.
+
+        Args:
+            event: TkDND drop event carrying the file path in
+                ``event.data``.
+        """
         self._drop_zone.config(bg=C["drop"])
         path_str = _clean_drop(event.data)
         if not path_str:
@@ -346,9 +417,8 @@ class App(TkinterDnD.Tk):
 
         self._status.set(f"Fichier charg\u00e9 : {p.name}")
 
-    # ── File browsing ─────────────────────────────────────────────────
-
     def _browse_input(self) -> None:
+        """Open a file dialog to select an input file."""
         path = filedialog.askopenfilename(
             filetypes=[
                 ("Audio / Excel", "*.wav *.xlsx"),
@@ -370,6 +440,7 @@ class App(TkinterDnD.Tk):
         self._status.set(f"Fichier charg\u00e9 : {p.name}")
 
     def _browse_output(self) -> None:
+        """Open a save-as dialog to choose the output file."""
         if self._mode == "xlsx":
             ft = [("Fichiers WAV", "*.wav"), ("Tous", "*.*")]
         else:
@@ -380,14 +451,24 @@ class App(TkinterDnD.Tk):
             self._output_path.set(path)
 
     def _auto_output(self, p: Path) -> None:
+        """Set the output path by swapping the input extension.
+
+        Args:
+            p: Input file path.  ``.xlsx`` becomes ``.wav`` and vice
+                versa.
+        """
         if p.suffix.lower() == ".xlsx":
             self._output_path.set(str(p.with_suffix(".wav")))
         else:
             self._output_path.set(str(p.with_suffix(".xlsx")))
 
-    # ── Validation ────────────────────────────────────────────────────
-
     def _validate(self) -> tuple[Path, Path] | None:
+        """Validate input/output paths before conversion.
+
+        Returns:
+            A ``(input_path, output_path)`` tuple, or ``None`` if
+            validation fails (a status message is set in that case).
+        """
         input_str = self._input_path.get().strip()
         output_str = self._output_path.get().strip()
 
@@ -406,9 +487,8 @@ class App(TkinterDnD.Tk):
 
         return input_path, Path(output_str)
 
-    # ── Conversion (threaded) ─────────────────────────────────────────
-
     def _convert(self) -> None:
+        """Validate inputs and launch the conversion in a background thread."""
         validated = self._validate()
         if validated is None:
             return
@@ -443,6 +523,12 @@ class App(TkinterDnD.Tk):
         thread.start()
 
     def _run_conversion(self, input_path: Path, output_path: Path) -> None:
+        """Execute the conversion (runs in a daemon thread).
+
+        Args:
+            input_path: Validated input file path.
+            output_path: Validated output file path.
+        """
         def on_progress(msg: str) -> None:
             self.after(0, self._status.set, msg)
 
@@ -461,6 +547,7 @@ class App(TkinterDnD.Tk):
                     input_path,
                     output_path,
                     export_audio=self._chk_audio.get(),
+                    export_peaks=self._chk_peaks.get(),
                     export_periphery=self._chk_periphery.get(),
                     export_integration=self._chk_integration.get(),
                     tau=tau,
@@ -480,11 +567,17 @@ class App(TkinterDnD.Tk):
             self.after(0, self._on_done, f"Erreur inattendue : {exc}")
 
     def _on_done(self, message: str) -> None:
+        """Update UI after conversion completes (called on the main thread).
+
+        Args:
+            message: Status string to display (success or error).
+        """
         self._status.set(message)
         self._convert_btn.config(state="normal")
 
 
 def main() -> None:
+    """Entry point for the GUI (``audio-converter-gui`` console script)."""
     app = App()
     app.mainloop()
 
