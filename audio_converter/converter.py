@@ -178,7 +178,7 @@ def wav_to_pipeline_excel(
 
     _report("Chargement audio...")
     try:
-        audio_data, sr = load_audio(input_path)
+        audio_data, sr = load_audio(input_path, target_sample_rate=16000)
     except Exception as exc:
         raise ConversionError(f"Impossible de lire le fichier WAV : {exc}") from exc
 
@@ -196,7 +196,9 @@ def wav_to_pipeline_excel(
         config = AuditoryPeripheryConfig.default()
         config.cochlear.sample_rate = sr
         periphery = AuditoryPeriphery(config)
-        result = periphery.process(audio_data)
+        # soundperception expects int16-scaled signal (peak extraction threshold > 1)
+        signal_int16 = (audio_data * INT16_MAX).astype(np.int16)
+        result = periphery.process(signal_int16)
 
         memo_ma = result["memo_ma"]
         memo_ck = result["memo_ck"]
