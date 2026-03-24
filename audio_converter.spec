@@ -4,20 +4,23 @@
 
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 block_cipher = None
 
 # Collect tkinterdnd2 native binaries (TkDND shared libraries)
 dnd_datas, dnd_binaries, dnd_hiddenimports = collect_all("tkinterdnd2")
 
-# Collect soundperception calibration data files
-sp_datas, sp_binaries, sp_hiddenimports = collect_all("soundperception")
+# Collect only soundperception.audition (the only subpackage used by audio-converter).
+# Using collect_all("soundperception") fails because other submodules (visualization,
+# core) import the standalone 'attractor' package which is not installed in CI.
+sp_datas = collect_data_files("soundperception.audition")
+sp_hiddenimports = collect_submodules("soundperception.audition")
 
 a = Analysis(
     ["audio_converter/gui.py"],
     pathex=[],
-    binaries=dnd_binaries + sp_binaries,
+    binaries=dnd_binaries,
     datas=dnd_datas + sp_datas,
     hiddenimports=[
         "numpy",
