@@ -161,6 +161,9 @@ def wav_to_pipeline_excel(
 
     The audio is resampled to 16 kHz and scaled to int16 before being fed
     to :class:`~soundperception.audition.core.periphery.AuditoryPeriphery`.
+    Channel order is reversed so that high frequencies appear in the
+    first rows and low frequencies at the bottom of each sheet.
+
     Each enabled stage produces one or more Excel sheets:
 
     * ``audio`` -- raw int16 signal (1 row per chunk of 16 384 samples).
@@ -235,6 +238,10 @@ def wav_to_pipeline_excel(
         signal_int16 = (audio_data * INT16_MAX).astype(np.int16)
         result = periphery.process(signal_int16, return_intermediate=True)
 
+        for key in ("peaks", "memo_ma", "memo_ck"):
+            if key in result:
+                result[key] = np.flipud(result[key])
+
         if export_peaks:
             _report("Export peaks...")
             ws_peaks = wb.create_sheet("peaks")
@@ -264,11 +271,11 @@ def wav_to_pipeline_excel(
 
             _report("Export memo MA intégré...")
             ws_ma_int = wb.create_sheet("memo_ma_int")
-            _write_2d_array(ws_ma_int, int_result["memo_ma"])
+            _write_2d_array(ws_ma_int, np.flipud(int_result["memo_ma"]))
 
             _report("Export memo CK intégré...")
             ws_ck_int = wb.create_sheet("memo_ck_int")
-            _write_2d_array(ws_ck_int, int_result["memo_ck"])
+            _write_2d_array(ws_ck_int, np.flipud(int_result["memo_ck"]))
 
     if not wb.sheetnames:
         raise ConversionError("Aucune étape sélectionnée pour l'export.")
