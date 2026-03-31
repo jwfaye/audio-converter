@@ -108,14 +108,14 @@ def excel_to_wav(
 def wav_to_excel(
     input_path: Path,
     output_path: Path,
-    sample_rate: int | None = None,
 ) -> ConversionResult:
     """Convert a WAV file to an Excel file (one row of samples).
+
+    The audio is always resampled to 16 kHz internally.
 
     Args:
         input_path: Path to the input .wav file.
         output_path: Path to the output .xlsx file.
-        sample_rate: Optional target sample rate for resampling (Hz).
 
     Returns:
         ConversionResult with details of the written file.
@@ -124,7 +124,7 @@ def wav_to_excel(
         ConversionError: If the WAV file cannot be read or conversion fails.
     """
     try:
-        audio_data, sr = load_audio(input_path, target_sample_rate=sample_rate)
+        audio_data, sr = load_audio(input_path, target_sample_rate=16000)
     except Exception as exc:
         raise ConversionError(f"Impossible de lire le fichier WAV : {exc}") from exc
 
@@ -153,7 +153,7 @@ def wav_to_pipeline_excel(
     export_peaks: bool = False,
     export_periphery: bool = True,
     export_integration: bool = False,
-    tau: int = 50,
+    tau: int = 200,
     decimation_factor: int = 100,
     progress_callback: Callable[[str], None] | None = None,
 ) -> ConversionResult:
@@ -244,21 +244,18 @@ def wav_to_pipeline_excel(
 
         if export_peaks:
             _report("Export peaks...")
-            ws_peaks = wb.create_sheet("peaks")
-            _write_2d_array(ws_peaks, result["peaks"])
+            peaks_sheets = _write_2d_array(wb, "peaks", result["peaks"])
             if export_audio:
                 _report("Export audio brut (sous peaks)...")
                 int16_data = (audio_data * INT16_MAX).astype(np.int16)
-                _append_audio_row(ws_peaks, int16_data)
+                _append_audio_row(wb, peaks_sheets, int16_data)
 
         if export_periphery:
             _report("Export memo MA...")
-            ws_ma = wb.create_sheet("memo_ma")
-            _write_2d_array(ws_ma, result["memo_ma"])
+            _write_2d_array(wb, "memo_ma", result["memo_ma"])
 
             _report("Export memo CK...")
-            ws_ck = wb.create_sheet("memo_ck")
-            _write_2d_array(ws_ck, result["memo_ck"])
+            _write_2d_array(wb, "memo_ck", result["memo_ck"])
 
         if export_integration:
             _report("Calcul intégration temporelle...")
@@ -270,12 +267,10 @@ def wav_to_pipeline_excel(
             int_result = integrator.process(result["memo_ma"], result["memo_ck"])
 
             _report("Export memo MA intégré...")
-            ws_ma_int = wb.create_sheet("memo_ma_int")
-            _write_2d_array(ws_ma_int, np.flipud(int_result["memo_ma"]))
+            _write_2d_array(wb, "memo_ma_int", np.flipud(int_result["memo_ma"]))
 
             _report("Export memo CK intégré...")
-            ws_ck_int = wb.create_sheet("memo_ck_int")
-            _write_2d_array(ws_ck_int, np.flipud(int_result["memo_ck"]))
+            _write_2d_array(wb, "memo_ck_int", np.flipud(int_result["memo_ck"]))
 
     if not wb.sheetnames:
         raise ConversionError("Aucune étape sélectionnée pour l'export.")
@@ -314,22 +309,52 @@ def _write_audio_sheets(wb: Workbook, int16_data: np.ndarray) -> None:
         ws.append([int(s) for s in chunk])
 
 
-def _append_audio_row(ws, int16_data: np.ndarray) -> None:
-    """Append int16 audio samples as a single row at the bottom of a sheet.
+def _append_audio_row(
+    wb: Workbook, sheet_names: list[str], int16_data: np.ndarray
+) -> None:
+    """Append int16 audio samples as a row across the given sheets.
+
+    The samples are split into chunks of :data:`EXCEL_MAX_COLS` and
+    appended to the corresponding sheets so that audio and 2-D data
+    stay aligned.
 
     Args:
-        ws: Target worksheet (row is appended after existing data).
+        wb: Workbook containing the target sheets.
+        sheet_names: Sheet names (as returned by :func:`_write_2d_array`).
         int16_data: 1-D array of int16 audio samples.
     """
-    ws.append([int(s) for s in int16_data])
+    for idx, name in enumerate(sheet_names):
+        col_start = idx * EXCEL_MAX_COLS
+        col_end = min(col_start + EXCEL_MAX_COLS, len(int16_data))
+        if col_start >= len(int16_data):
+            break
+        wb[name].append([int(s) for s in int16_data[col_start:col_end]])
 
 
-def _write_2d_array(ws, array: np.ndarray) -> None:
-    """Write a 2-D NumPy array to a worksheet (rows = channels, cols = samples).
+def _write_2d_array(
+    wb: Workbook, sheet_name: str, array: np.ndarray
+) -> list[str]:
+    """Write a 2-D NumPy array across one or more sheets.
+
+    When the number of samples (columns) exceeds :data:`EXCEL_MAX_COLS`,
+    the array is split column-wise across sheets named ``sheet_name``,
+    ``sheet_name_2``, ``sheet_name_3``, etc.
 
     Args:
-        ws: Target worksheet.
+        wb: Target workbook (sheets are created in-place).
+        sheet_name: Base name for the created sheet(s).
         array: 2-D array of shape ``(n_channels, n_samples)``.
+
+    Returns:
+        List of sheet names that were created.
     """
-    for row in array:
-        ws.append([float(v) for v in row])
+    _n_channels, n_samples = array.shape
+    sheet_names: list[str] = []
+    for chunk_idx, col_start in enumerate(range(0, n_samples, EXCEL_MAX_COLS)):
+        col_end = min(col_start + EXCEL_MAX_COLS, n_samples)
+        name = sheet_name if chunk_idx == 0 else f"{sheet_name}_{chunk_idx + 1}"
+        ws = wb.create_sheet(name)
+        for row in array[:, col_start:col_end]:
+            ws.append([float(v) for v in row])
+        sheet_names.append(name)
+    return sheet_names

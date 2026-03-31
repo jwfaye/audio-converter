@@ -86,7 +86,7 @@ class App(TkinterDnD.Tk):
         self._chk_peaks = tk.BooleanVar(value=False)
         self._chk_periphery = tk.BooleanVar(value=True)
         self._chk_integration = tk.BooleanVar(value=False)
-        self._tau = tk.StringVar(value="50")
+        self._tau = tk.StringVar(value="200")
         self._decimation = tk.StringVar(value="100")
 
         self._build()
@@ -537,7 +537,7 @@ class App(TkinterDnD.Tk):
                 sr = int(self._sample_rate.get())
                 result = excel_to_wav(input_path, output_path, sr)
             else:
-                tau = int(self._tau.get()) if self._tau.get().strip() else 50
+                tau = int(self._tau.get()) if self._tau.get().strip() else 200
                 dec = (
                     int(self._decimation.get())
                     if self._decimation.get().strip()
